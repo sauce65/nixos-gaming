@@ -26,7 +26,7 @@
     heroic
     bottles
     umu-launcher
-    wineWowPackages.staging
+    wineWow64Packages.staging
     winetricks
     dxvk
   ];

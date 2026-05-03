@@ -15,7 +15,7 @@ let
     name = "bellum-bootstrap";
     runtimeInputs = with pkgs; [
       umu-launcher
-      wineWowPackages.staging
+      wineWow64Packages.staging
       winetricks
       cabextract
       coreutils
@@ -110,7 +110,7 @@ in
     bellum
     bellum-desktop
     pkgs.umu-launcher
-    pkgs.wineWowPackages.staging
+    pkgs.wineWow64Packages.staging
     pkgs.winetricks
     pkgs.cabextract
   ];
