@@ -24,7 +24,6 @@
     goverlay
     protonup-qt
     heroic
-    bottles
     umu-launcher
     wineWow64Packages.staging
     winetricks
