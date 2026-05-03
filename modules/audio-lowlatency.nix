@@ -26,7 +26,7 @@
             nodes = [
               { type = "ladspa";
                 name = "rnnoise";
-                plugin = "${pkgs.rnnoise-plugin}/lib/ladspa/librnnoise_ladspa.so";
+                plugin = "${pkgs.rnnoise-plugin}/lib/ladspa/librnnoise_ladspa";
                 label = "noise_suppressor_mono";
                 control = {
                   "VAD Threshold (%)" = 50.0;
