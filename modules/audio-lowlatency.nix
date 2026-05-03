@@ -80,6 +80,25 @@ in
   # Keep Blue Yeti / Blue Microphones USB devices always-streaming so the
   # firmware never lands in its stuck post-suspend state. Tradeoff: mic-live
   # LED stays on; minor extra USB power draw.
+  #
+  # Two layers, both required:
+  #
+  # 1) Kernel-level: disable USB autosuspend for vendor 046d product 0ab7
+  #    (Logitech Blue Yeti). The kernel autosuspends idle USB devices after
+  #    ~2s by default, and the Yeti's firmware doesn't reliably wake — it
+  #    enters a half-stuck state where ALSA says "Running" but no samples
+  #    arrive. udev sets power/control = "on" so the kernel never suspends
+  #    this device.
+  #
+  # 2) PipeWire-level: WirePlumber's own suspend-on-idle, set to 0
+  #    (never), so ALSA stays open continuously. Without this, even if the
+  #    kernel keeps the USB device awake, PipeWire would close the ALSA
+  #    handle on idle and reopen it later.
+  services.udev.extraRules = ''
+    # Blue Microphones (Logitech) Yeti — disable USB autosuspend
+    SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="0ab7", TEST=="power/control", ATTR{power/control}="on"
+  '';
+
   services.pipewire.wireplumber.extraConfig."51-yeti-no-suspend" = {
     "monitor.alsa.rules" = [
       { matches = [ { "node.name" = "~alsa_input.*Blue.*"; } ];
