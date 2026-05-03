@@ -14,12 +14,48 @@
     };
   };
 
-  # Noise suppression: use EasyEffects (user-launched) rather than PipeWire's
-  # filter-chain. PipeWire 1.6.3 in current nixpkgs has a broken
-  # libspa-filter-graph-plugin-ladspa.so (undefined symbol spa_log_topic_enum)
-  # which prevents filter-chain from loading any LADSPA plugin and crashes
-  # the whole PipeWire daemon. EasyEffects loads plugins in user-space and
-  # bypasses that bug.
+  # Expose rnnoise-plugin to PipeWire's LADSPA path.
+  services.pipewire.extraLadspaPackages = [ pkgs.rnnoise-plugin ];
+
+  # RNNoise noise suppression via PipeWire filter-chain.
+  # Creates a virtual "Noise Canceling source" input device.
+  # `plugin` is a LADSPA basename - PipeWire automatically appends `.so` and
+  # searches LADSPA_PATH. Do NOT include `.so` here or you get `.so.so`.
+  services.pipewire.extraConfig.pipewire."93-rnnoise" = {
+    "context.modules" = [
+      { name = "libpipewire-module-filter-chain";
+        args = {
+          "node.description" = "Noise Canceling source";
+          "media.name" = "Noise Canceling source";
+          "filter.graph" = {
+            nodes = [
+              { type = "ladspa";
+                name = "rnnoise";
+                plugin = "librnnoise_ladspa";
+                label = "noise_suppressor_mono";
+                control = {
+                  "VAD Threshold (%)" = 50.0;
+                  "VAD Grace Period (ms)" = 200;
+                  "Retroactive VAD Grace (ms)" = 0;
+                };
+              }
+            ];
+          };
+          "capture.props" = {
+            "node.name" = "capture.rnnoise_source";
+            "node.passive" = true;
+            "audio.rate" = 48000;
+          };
+          "playback.props" = {
+            "node.name" = "rnnoise_source";
+            "media.class" = "Audio/Source";
+            "audio.rate" = 48000;
+          };
+        };
+      }
+    ];
+  };
+
   environment.systemPackages = with pkgs; [
     easyeffects
   ];
