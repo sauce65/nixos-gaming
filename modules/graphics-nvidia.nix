@@ -20,7 +20,13 @@
     open = true;
     nvidiaSettings = true;
     powerManagement.enable = true;
-    package = config.boot.kernelPackages.nvidiaPackages.production;
+    # Pinned to new_feature (590.48.01) instead of production (595.58.03).
+    # 595 has a confirmed shader-compilation bug on Blackwell (RTX 50-series)
+    # that hangs UE5 games via VKD3D-Proton during PSO compile (e.g., Bellum
+    # gets stuck on loading screens). 590 is the highest known-good driver
+    # for Blackwell at time of writing. See:
+    # https://github.com/joepaji/bellum-linux-installer/releases/tag/v2.0.0
+    package = config.boot.kernelPackages.nvidiaPackages.new_feature;
   };
 
   boot.kernelParams = [
