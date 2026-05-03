@@ -14,8 +14,12 @@
     };
   };
 
+  # Expose rnnoise-plugin to PipeWire's LADSPA path.
+  services.pipewire.extraLadspaPackages = [ pkgs.rnnoise-plugin ];
+
   # RNNoise noise suppression via PipeWire filter-chain.
   # Creates a virtual "Noise Canceling source" input device.
+  # `plugin` is a LADSPA basename (no path, no .so) — PipeWire searches LADSPA_PATH.
   services.pipewire.extraConfig.pipewire."93-rnnoise" = {
     "context.modules" = [
       { name = "libpipewire-module-filter-chain";
@@ -26,7 +30,7 @@
             nodes = [
               { type = "ladspa";
                 name = "rnnoise";
-                plugin = "${pkgs.rnnoise-plugin}/lib/ladspa/librnnoise_ladspa";
+                plugin = "librnnoise_ladspa";
                 label = "noise_suppressor_mono";
                 control = {
                   "VAD Threshold (%)" = 50.0;
@@ -52,7 +56,6 @@
   };
 
   environment.systemPackages = with pkgs; [
-    rnnoise-plugin
     easyeffects
   ];
 }
