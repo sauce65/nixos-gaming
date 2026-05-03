@@ -18,9 +18,8 @@ let
       }
       BUS=$(echo "$LINE" | awk '{print $2}')
       DEV=$(echo "$LINE" | awk '{print $4}' | tr -d ':')
-      DEVPATH="/dev/bus/usb/''${BUS}/''${DEV}"
-      echo "Resetting Yeti at $DEVPATH..."
-      sudo usbreset "$DEVPATH"
+      echo "Resetting Yeti at bus $BUS device $DEV..."
+      sudo usbreset "''${BUS}/''${DEV}"
       echo "Done. Wait ~2s before recording."
     '';
   };
