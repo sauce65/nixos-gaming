@@ -90,6 +90,16 @@ let
 
       export WINEPREFIX GAMEID="bellum"
       export PROTONPATH="''${PROTONPATH:-GE-Proton}"
+
+      # The Astarte launcher embeds Microsoft's WebView2 (Chromium-based).
+      # WebView2's storage-utility subprocess starts under wine64-preloader,
+      # whose first instruction is arch_prctl(ARCH_SET_FS) — syscall 158.
+      # Chromium's seccomp BPF filter blocks unknown syscalls, sending SIGSYS
+      # to wine64-preloader at _start+0x26 before Wine even initializes.
+      # Disabling only Chromium's seccomp filter lets wine64-preloader through;
+      # Wine's own sandbox/namespace isolation is unaffected.
+      export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-seccomp-filter-sandbox"
+
       exec umu-run "$LAUNCHER"
     '';
   };
