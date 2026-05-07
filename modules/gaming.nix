@@ -27,6 +27,5 @@
     umu-launcher
     wineWow64Packages.staging
     winetricks
-    dxvk
   ];
 }
