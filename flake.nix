@@ -13,6 +13,11 @@
       # Bellum (Astarte Industries) via umu-run + GE-Proton
       bellum = import ./modules/bellum.nix;
 
+      # Per-game log capture harness (gamerun/gamelogs/gamewatch CLIs).
+      # Other modules (e.g. bellum) declare their game profiles via the
+      # `gamelogs.games.<name>` option this exposes.
+      gamelogs = import ./modules/gamelogs.nix;
+
       # NVIDIA proprietary drivers with Wayland + VA-API
       graphics-nvidia = import ./modules/graphics-nvidia.nix;
 
@@ -29,6 +34,7 @@
       default = { imports = [
         ./modules/gaming.nix
         ./modules/bellum.nix
+        ./modules/gamelogs.nix
         ./modules/audio-lowlatency.nix
         ./modules/streaming.nix
         ./modules/controllers.nix

@@ -91,16 +91,10 @@ let
       export WINEPREFIX GAMEID="bellum"
       export PROTONPATH="''${PROTONPATH:-GE-Proton}"
 
-      # The Astarte launcher embeds Microsoft's WebView2 (Chromium-based).
-      # WebView2's storage-utility subprocess starts under wine64-preloader,
-      # whose first instruction is arch_prctl(ARCH_SET_FS) — syscall 158.
-      # Chromium's seccomp BPF filter blocks unknown syscalls, sending SIGSYS
-      # to wine64-preloader at _start+0x26 before Wine even initializes.
-      # Disabling only Chromium's seccomp filter lets wine64-preloader through;
-      # Wine's own sandbox/namespace isolation is unaffected.
-      export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-seccomp-filter-sandbox"
-
-      exec umu-run "$LAUNCHER"
+      # gamerun supplies WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      # VKD3D_CONFIG=breadcrumbs, and all the logging knobs via the
+      # gamelogs.games.bellum profile declared below.
+      exec gamerun bellum -- umu-run "$LAUNCHER"
     '';
   };
 
@@ -124,4 +118,28 @@ in
     pkgs.winetricks
     pkgs.cabextract
   ];
+
+  # gamelogs harness — declarative log-capture profile. The bellum wrapper
+  # `exec gamerun bellum -- umu-run "$LAUNCHER"`s through this; gamerun
+  # mirrors the internal log files into the run dir and sets the env knobs.
+  gamelogs.games.bellum = {
+    wrapperOf = "umu-run";
+    engine = "ue5";
+    internalPaths = [
+      # UE5 game log + auto-rotated backups.
+      "$WINEPREFIX/drive_c/users/steamuser/AppData/Local/Project_Bellum/Saved/Logs/Project_Bellum.log"
+      # Astarte launcher logs.
+      "$WINEPREFIX/drive_c/users/steamuser/AppData/Roaming/Astarte Industries/Astarte Launcher/logs/out.log"
+      "$WINEPREFIX/drive_c/users/steamuser/AppData/Roaming/Astarte Industries/Astarte Launcher/logs/error.log"
+      # Bootstrap winetricks log (one-shot, but cheap to mirror).
+      "$WINEPREFIX/winetricks.log"
+    ];
+    extraEnv = {
+      # WebView2 SIGSYS workaround — see bellum wrapper comment history.
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--disable-seccomp-filter-sandbox";
+      # Breadcrumbs are already in gamelogs.defaultEnv but explicit here is fine;
+      # if a future override removes them globally, Bellum still keeps them.
+      VKD3D_CONFIG = "breadcrumbs";
+    };
+  };
 }
