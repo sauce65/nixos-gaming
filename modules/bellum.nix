@@ -94,7 +94,7 @@ let
       # gamerun supplies WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
       # VKD3D_CONFIG=breadcrumbs, and all the logging knobs via the
       # gamelogs.games.bellum profile declared below.
-      exec gamerun bellum -- umu-run "$LAUNCHER"
+      exec gamerun bellum "$@" -- umu-run "$LAUNCHER"
     '';
   };
 
