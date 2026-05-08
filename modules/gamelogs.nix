@@ -37,10 +37,9 @@ let
     name = "gamerun";
     runtimeInputs = with pkgs; [
       jq
-      inotify-tools
-      coreutils
+      coreutils      # tail -F, cp, ln, mkdir, rm, df
       util-linux
-      systemd
+      systemd        # systemd-run, systemctl, journalctl, coredumpctl
       findutils
       gnugrep
       gnused
@@ -59,16 +58,20 @@ let
 
       usage() {
         cat <<'EOF'
-      Usage: gamerun <game> [--bench] [--dump-shaders] -- <command> [args...]
+      Usage: gamerun <game> [--bench] [--dump-shaders] [--debug] -- <command> [args...]
 
       Flags:
         --bench          enable MangoHud frametime CSV (output_folder=<run>/mangohud)
         --dump-shaders   set VKD3D_SHADER_DUMP_PATH=<run>/shaders (large output)
+        --debug          enable heavy diagnostics (PROTON_LOG=1, DXVK_LOG_LEVEL=debug,
+                         VKD3D_DEBUG=info). Adds GBs of log output per hour — only
+                         use for triage runs, not normal play.
       EOF
       }
 
       bench=0
       dump_shaders=0
+      debug=0
       game=""
       cmd=()
 
@@ -76,6 +79,7 @@ let
         case "$1" in
           --bench)         bench=1; shift ;;
           --dump-shaders)  dump_shaders=1; shift ;;
+          --debug)         debug=1; shift ;;
           -h|--help)       usage; exit 0 ;;
           --)              shift; cmd=("$@"); break ;;
           -*)              echo "Unknown flag: $1" >&2; usage >&2; exit 1 ;;
@@ -156,6 +160,15 @@ let
         env_map[VKD3D_SHADER_DUMP_PATH]="$run_dir/shaders"
       fi
 
+      if (( debug )); then
+        # Heavy diagnostics — Wine's full Proton-style debug output, plus
+        # bumped DXVK/VKD3D verbosity. Easily 1+ GB/hour during gameplay.
+        env_map[PROTON_LOG]="1"
+        env_map[DXVK_LOG_LEVEL]="debug"
+        env_map[VKD3D_DEBUG]="info"
+        env_map[DXVK_NVAPI_LOG_LEVEL]="info"
+      fi
+
       # Pre-launch system snapshots.
       start_iso=$(date --iso-8601=seconds)
       start_epoch=$(date +%s)
@@ -205,52 +218,31 @@ let
         ln -sfn "''${env_map[PROTONPATH]}" "$gcroot_link" 2>/dev/null || gcroot_link=""
       fi
 
-      # Internal-path mirroring. Watch parent dir so rotation events are seen.
-      # inotifywait runs directly (not inside a wrapping subshell) so we can
-      # capture its real PID and kill it cleanly at finalize. A backgrounded
-      # processor reads events via a FIFO; when inotifywait dies, the FIFO
-      # EOFs and the processor exits.
+      # Internal-path mirroring via `tail -F`. The earlier inotify+cp approach
+      # only fired on close_write/moved_to/create, missing the typical UE5
+      # case where the engine holds the log file open for the entire run and
+      # writes via plain fwrite (no close until exit). It also would have
+      # required full-file copies on every event — at hundreds of MBs/hour
+      # that's hundreds of GBs of write traffic on ext4 (no reflink).
+      #
+      # `tail -F -n +0` streams the existing content + all appends, by name,
+      # auto-retrying if the file doesn't exist yet and reopening on rotation.
+      # Disk traffic equals the source's actual byte rate. Tracked PIDs are
+      # the tail processes themselves, so finalize can kill them directly.
+      # The final-pass cp at finalize gives an authoritative snapshot in case
+      # tail missed bytes at the very start of the run.
       mapfile -t internal_paths < <(jq -r '.internalPaths[]?' <<< "$game_data")
       mirror_pids=()
-      mirror_fifos=()
-      mkdir -p "$run_dir/.mirror"
       for raw in "''${internal_paths[@]}"; do
-        # Lightweight var expansion — supports $WINEPREFIX and $HOME only.
         expanded="''${raw//\$WINEPREFIX/''${env_map[WINEPREFIX]:-}}"
         expanded="''${expanded//\$HOME/$HOME}"
-        parent=$(dirname "$expanded")
         base=$(basename "$expanded")
+        parent=$(dirname "$expanded")
         if [[ ! -d "$parent" ]]; then
           echo "[mirror] skip (parent missing): $expanded" >> "$run_dir/system/mirrors.log"
           continue
         fi
-
-        [[ -f "$expanded" ]] && cp -a "$expanded" "$run_dir/internal/$base" 2>/dev/null || true
-
-        fifo="$run_dir/.mirror/$base.events"
-        mkfifo -m 600 "$fifo" 2>/dev/null || continue
-        mirror_fifos+=("$fifo")
-
-        # inotifywait writes events to the FIFO. We track its PID directly.
-        inotifywait -m -q -e close_write,moved_to,create --format '%f' "$parent" \
-          > "$fifo" 2>/dev/null &
-        mirror_pids+=($!)
-
-        # Processor reads from the FIFO and re-copies on each event.
-        # When inotifywait is killed, the FIFO closes and the read loop exits.
-        (
-          last=0
-          while IFS= read -r name; do
-            [[ "$name" != "$base" ]] && continue
-            now=$(date +%s)
-            (( now - last < 1 )) && continue
-            last=$now
-            if [[ -f "$expanded" ]]; then
-              cp -a "$expanded" "$run_dir/internal/$base.tmp" 2>/dev/null \
-                && mv "$run_dir/internal/$base.tmp" "$run_dir/internal/$base"
-            fi
-          done < "$fifo"
-        ) &
+        tail -F -n +0 -q --silent "$expanded" > "$run_dir/internal/$base" 2>/dev/null &
         mirror_pids+=($!)
       done
 
@@ -264,7 +256,8 @@ let
         end_epoch=$(date +%s)
         duration=$(( end_epoch - start_epoch ))
 
-        # Stop mirrors gracefully, then force.
+        # Stop tail-based mirrors. We track tail PIDs directly so direct kill
+        # suffices — no orphan watchers possible.
         if (( ''${#mirror_pids[@]} > 0 )); then
           for pid in "''${mirror_pids[@]}"; do
             kill -TERM "$pid" 2>/dev/null || true
@@ -274,11 +267,6 @@ let
             kill -KILL "$pid" 2>/dev/null || true
           done
         fi
-        # Remove FIFOs (and the .mirror dir if empty).
-        for f in "''${mirror_fifos[@]}"; do
-          rm -f "$f" 2>/dev/null || true
-        done
-        rmdir "$run_dir/.mirror" 2>/dev/null || true
 
         # Final mirror pass — catch anything between the last inotify event and shutdown.
         for raw in "''${internal_paths[@]}"; do
@@ -295,28 +283,33 @@ let
           nvidia-smi -q > "$run_dir/system/nvidia-smi-end.txt" 2>&1 || true
         fi
 
-        # Journal slice (user scope + kernel). These are dumped to files at
-        # capture time, so they survive reboots regardless of journald storage.
-        journalctl --user --user-unit="$scope_unit" --since="$start_iso" -o short-iso \
+        # Journal slice (user scope + kernel). Use unix epoch for --since:
+        # journalctl is fussy about ISO 8601 with timezone offsets and
+        # silently returns one stale line for some inputs. @<epoch> always
+        # works. The slice is dumped to files at capture time so it survives
+        # reboots regardless of journald storage policy.
+        journalctl --user --user-unit="$scope_unit" --since="@$start_epoch" -o short-iso \
           > "$run_dir/system/journal.txt" 2>&1 || true
-        journalctl -k --since="$start_iso" -o short-iso \
+        journalctl -k --since="@$start_epoch" -o short-iso \
           > "$run_dir/system/dmesg.log" 2>&1 || true
 
         # Coredumps within the run window.
-        coredumpctl list --since="$start_iso" --no-pager \
+        coredumpctl list --since="@$start_epoch" --no-pager \
           > "$run_dir/system/coredumps.txt" 2>&1 || true
         # Best-effort: dump cores listed since start. coredumpctl matches by
         # PID/COMM/etc.; we capture all in-window dumps and let triage filter.
-        if coredumpctl list --since="$start_iso" --no-legend >/dev/null 2>&1; then
+        if coredumpctl list --since="@$start_epoch" --no-legend >/dev/null 2>&1; then
           while IFS= read -r line; do
             pid=$(awk '{print $5}' <<< "$line")
             [[ "$pid" =~ ^[0-9]+$ ]] || continue
             coredumpctl dump --output="$run_dir/system/coredumps/core.$pid" "$pid" \
               >/dev/null 2>&1 || true
-          done < <(coredumpctl list --since="$start_iso" --no-legend 2>/dev/null)
+          done < <(coredumpctl list --since="@$start_epoch" --no-legend 2>/dev/null)
         fi
 
-        # Crash classification.
+        # Crash classification. Order matters — later checks win when more
+        # specific. Notable: engines like UE5 catch GPU device-removed and
+        # exit cleanly (exit_code=0), so we MUST scan logs even on exit 0.
         crash_kind="null"
         signal_name=""
         case "$launch_exit" in
@@ -329,6 +322,23 @@ let
           159) crash_kind="signal"; signal_name="SIGSYS"  ;;
           *)   crash_kind="unknown" ;;
         esac
+        # vkd3d-proton device-lost (Vulkan VK_ERROR_DEVICE_LOST). This is
+        # what fires for UE5 + Blackwell GPU hangs; UE5 then exits 0.
+        if grep -qE 'VK_ERROR_DEVICE_LOST|d3d12_device_mark_as_removed' \
+             "$run_dir/vkd3d.log" 2>/dev/null; then
+          crash_kind="gpu_crash"
+        fi
+        # Engine-side GPU crash markers (UE5 phrasing).
+        if grep -qE 'GPU crash detected|DXGI_ERROR_DEVICE_REMOVED|Device .* Removed' \
+             "$run_dir"/internal/*.log 2>/dev/null; then
+          crash_kind="gpu_crash"
+        fi
+        # Engine-side fatal (non-GPU) — UE5 "Fatal error!" dialog.
+        if grep -q 'LogWindows.*Fatal error\|Engine has crashed' \
+             "$run_dir"/internal/*.log 2>/dev/null && [[ "$crash_kind" == "null" ]]; then
+          crash_kind="engine_fatal"
+        fi
+        # Kernel-side NVRM Xid (real GPU fault as seen by the driver).
         if grep -q 'NVRM:.*Xid' "$run_dir/system/dmesg.log" 2>/dev/null; then
           crash_kind="gpu_fault"
         fi
@@ -739,12 +749,21 @@ in
     defaultEnv = mkOption {
       type = types.attrsOf types.str;
       default = {
+        # Targeted Wine channels — quiet during gameplay, fire only on
+        # interesting events (exception unwind, DLL load).
         WINEDEBUG = "+seh,+unwind,+module,+pid,+tid,+timestamp";
-        DXVK_LOG_LEVEL = "info";
+        # DXVK at warn — info dumps swapchain init + every frame's adapter
+        # state changes, way too noisy for normal runs.
+        DXVK_LOG_LEVEL = "warn";
+        # VKD3D warn-only; bump via --debug for triage.
         VKD3D_DEBUG = "warn";
+        # Breadcrumbs add per-command-list markers that survive a hang —
+        # cheap and high-signal for GPU crash triage.
         VKD3D_CONFIG = "breadcrumbs";
-        PROTON_LOG = "1";
         DXVK_NVAPI_LOG_LEVEL = "warn";
+        # NB: PROTON_LOG=1 is intentionally NOT a default. It generates
+        # 1+ GB/hour of synchronous Wine trace output during gameplay,
+        # itself causing stutters. Use `gamerun --debug` to enable.
       };
       description = ''
         Env vars set by gamerun for every game. Per-game `extraEnv` wins on conflicts.

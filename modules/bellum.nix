@@ -135,8 +135,13 @@ in
       "$WINEPREFIX/winetricks.log"
     ];
     extraEnv = {
-      # WebView2 SIGSYS workaround — see bellum wrapper comment history.
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--disable-seccomp-filter-sandbox";
+      # WebView2 SIGSYS workaround. The --service-sandbox-type=service flag
+      # Chromium 147+ adds to utility subprocesses (e.g. storage.mojom.StorageService)
+      # overrides --disable-seccomp-filter-sandbox alone, re-installing the BPF
+      # filter that traps wine64-preloader's arch_prctl(ARCH_SET_FS) at _start+38.
+      # --no-sandbox disables all sandbox layers globally; we keep the seccomp
+      # flag alongside as defense-in-depth.
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--no-sandbox --disable-seccomp-filter-sandbox";
       # Breadcrumbs are already in gamelogs.defaultEnv but explicit here is fine;
       # if a future override removes them globally, Bellum still keeps them.
       VKD3D_CONFIG = "breadcrumbs";
