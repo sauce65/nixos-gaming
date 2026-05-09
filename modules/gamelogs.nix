@@ -58,7 +58,7 @@ let
 
       usage() {
         cat <<'EOF'
-      Usage: gamerun <game> [--bench] [--dump-shaders] [--debug] -- <command> [args...]
+      Usage: gamerun <game> [--bench] [--dump-shaders] [--debug] [--record] -- <command> [args...]
 
       Flags:
         --bench          enable MangoHud frametime CSV (output_folder=<run>/mangohud)
@@ -66,12 +66,17 @@ let
         --debug          enable heavy diagnostics (PROTON_LOG=1, DXVK_LOG_LEVEL=debug,
                          VKD3D_DEBUG=info). Adds GBs of log output per hour — only
                          use for triage runs, not normal play.
+        --record         enable obs-vkcapture by setting OBS_VKCAPTURE=1 and
+                         OBS_VKCAPTURE_NAME=<game>. The Vulkan layer is loaded
+                         implicitly inside the game; OBS Studio's "Game Capture"
+                         (vkcapture-source) will pick the frames up.
       EOF
       }
 
       bench=0
       dump_shaders=0
       debug=0
+      record=0
       game=""
       cmd=()
 
@@ -80,6 +85,7 @@ let
           --bench)         bench=1; shift ;;
           --dump-shaders)  dump_shaders=1; shift ;;
           --debug)         debug=1; shift ;;
+          --record)        record=1; shift ;;
           -h|--help)       usage; exit 0 ;;
           --)              shift; cmd=("$@"); break ;;
           -*)              echo "Unknown flag: $1" >&2; usage >&2; exit 1 ;;
@@ -167,6 +173,18 @@ let
         env_map[DXVK_LOG_LEVEL]="debug"
         env_map[VKD3D_DEBUG]="info"
         env_map[DXVK_NVAPI_LOG_LEVEL]="info"
+      fi
+
+      if (( record )); then
+        # Trigger obs-vkcapture's implicit Vulkan layer (registered via
+        # VK_LAYER_OBS_vkcapture_64.json with enable_environment OBS_VKCAPTURE=1).
+        # OBS Studio's vkcapture-source picks up frames over a Unix socket.
+        # The OpenGL hook (libobs_glcapture.so via LD_PRELOAD) is intentionally
+        # NOT injected here — getting LD_PRELOAD to survive Wine's startup is
+        # fragile. Vulkan/DX11/DX12 games (DXVK/VKD3D-Proton) cover ~all
+        # Windows games launched through this harness.
+        env_map[OBS_VKCAPTURE]="1"
+        env_map[OBS_VKCAPTURE_NAME]="$game"
       fi
 
       # Pre-launch system snapshots.
