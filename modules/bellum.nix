@@ -70,9 +70,19 @@ let
     '';
   };
 
+  # Sidekick that XDefineCursors an arrow onto the Astarte launcher window so
+  # the mouse stays visible over it. See bellum-cursor-fix.py for why.
+  bellum-cursor-fix = pkgs.writeShellApplication {
+    name = "bellum-cursor-fix";
+    runtimeInputs = [ (pkgs.python3.withPackages (ps: [ ps.xlib ])) ];
+    text = ''
+      exec python3 ${./bellum-cursor-fix.py} "$@"
+    '';
+  };
+
   bellum = pkgs.writeShellApplication {
     name = "bellum";
-    runtimeInputs = with pkgs; [ umu-launcher ];
+    runtimeInputs = with pkgs; [ umu-launcher bellum-cursor-fix ];
     text = ''
       WINEPREFIX="${prefixDir}"
       LAUNCHER="$WINEPREFIX/${launcherExe}"
@@ -90,6 +100,9 @@ let
 
       export WINEPREFIX GAMEID="bellum"
       export PROTONPATH="''${PROTONPATH:-GE-Proton}"
+
+      # Sidekick self-exits a few seconds after the launcher window goes away.
+      bellum-cursor-fix astarte &
 
       # gamerun supplies WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
       # VKD3D_CONFIG=breadcrumbs, and all the logging knobs via the
