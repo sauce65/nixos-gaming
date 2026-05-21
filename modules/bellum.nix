@@ -158,6 +158,15 @@ in
       # Breadcrumbs are already in gamelogs.defaultEnv but explicit here is fine;
       # if a future override removes them globally, Bellum still keeps them.
       VKD3D_CONFIG = "breadcrumbs";
+      # Force wine off the futex-based fsync backend onto eventfd-based
+      # esync. fsync's fsync_free_shm_idx hit a shm-index double-free from
+      # a raced get_cached_object cache lookup ~2h into a session, killing
+      # wineserver and freezing both the launcher and the game (entire
+      # prefix's NT kernel was gone, so every futex wait stranded). esync
+      # implements the same Windows primitives with no known equivalent
+      # race. Cost is one eventfd per kernel object — negligible at our
+      # ulimit, sub-1% frame-time impact in practice.
+      PROTON_NO_FSYNC = "1";
     };
   };
 }

@@ -363,6 +363,16 @@ let
         if grep -qE 'oom-kill|Out of memory.*Killed' "$run_dir/system/journal.txt" 2>/dev/null; then
           crash_kind="oom"
         fi
+        # Wineserver assertion abort (e.g. fsync_free_shm_idx double-free).
+        # Root-cause indicator: when wineserver dies, every Windows process
+        # in the prefix loses its NT kernel and strands on futex waits that
+        # nobody can signal — so this wins over downstream symptoms like
+        # gpu_crash or engine_fatal. Tail-scan only: the assertion fires
+        # once, and stderr.log runs to GBs under verbose WINEDEBUG.
+        if tail -c 1M "$run_dir/stderr.log" 2>/dev/null \
+             | grep -qE 'wineserver:.*Assertion .* failed'; then
+          crash_kind="wineserver_died"
+        fi
 
         # Update metadata.json.
         local crash_arg signal_arg
