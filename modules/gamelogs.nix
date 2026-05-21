@@ -440,6 +440,31 @@ let
         setenv_args+=("--setenv=$k=''${env_map[$k]}")
       done
 
+      # Inner scope cwd. systemd-run inherits cwd from this process; that
+      # cwd propagates through umu-run -> bwrap (--chdir) -> wine and
+      # becomes the cwd seen by every relative-path file API the game
+      # makes. Some Windows launchers depend on cwd == install dir for
+      # self-update (e.g. Astarte writes AstarteLauncher.exe.update next
+      # to the .exe expecting to find it again on next launch). The
+      # default — inheriting the caller's shell cwd — leaks that path
+      # into wine; at best clutter, at worst a 76 MB .exe.update dropped
+      # into whatever git repo you happened to launch gamerun from.
+      #
+      # If cmd[] holds an existing *.exe, chdir to its parent (mirrors
+      # the Windows shortcut "Start in" field). Otherwise fall back to
+      # the per-run dir, where stray relative-path writes become run
+      # artifacts and are GC'd alongside the run.
+      launch_cwd=""
+      for arg in "''${cmd[@]}"; do
+        if [[ "$arg" == *.exe && -f "$arg" ]]; then
+          launch_cwd=$(dirname "$arg")
+          break
+        fi
+      done
+      [[ -z "$launch_cwd" ]] && launch_cwd="$run_dir"
+      printf '%s\n' "$launch_cwd" > "$run_dir/cwd.txt"
+      cd "$launch_cwd" || exit 1
+
       # Launch the scope. stdout/stderr go to files via shell redirection
       # inherited by the inner process, so they survive wrapper death.
       # `set +e` is needed because we want to capture the exit code rather
