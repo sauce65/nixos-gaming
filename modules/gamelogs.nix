@@ -196,6 +196,20 @@ let
       if command -v nvidia-smi >/dev/null 2>&1; then
         nvidia-smi -q > "$run_dir/system/nvidia-smi-start.txt" 2>&1 || true
       fi
+
+      # Continuous 1 Hz GPU sampler — background process killed in finalize.
+      # ~50 KB/min, negligible cost. Tells us whether thermal/power
+      # throttling or a clock collapse preceded a device-lost — info we
+      # can't reconstruct after the fact from any other source.
+      nvidia_smi_stream_pid=""
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi -lms 1000 \
+          --query-gpu=timestamp,temperature.gpu,power.draw,clocks.gr,clocks.mem,utilization.gpu,utilization.memory,memory.used,memory.free,pstate,clocks_throttle_reasons.active \
+          --format=csv,nounits \
+          > "$run_dir/system/nvidia-smi-stream.csv" 2>/dev/null &
+        nvidia_smi_stream_pid=$!
+      fi
+
       if [[ -r /proc/driver/nvidia/version ]]; then
         cp /proc/driver/nvidia/version "$run_dir/system/nvidia-version.txt" 2>/dev/null || true
       fi
@@ -286,6 +300,11 @@ let
           for pid in "''${mirror_pids[@]}"; do
             kill -KILL "$pid" 2>/dev/null || true
           done
+        fi
+
+        # Stop the GPU sampler. nvidia-smi -lms exits cleanly on TERM.
+        if [[ -n "$nvidia_smi_stream_pid" ]]; then
+          kill -TERM "$nvidia_smi_stream_pid" 2>/dev/null || true
         fi
 
         # Final mirror pass — catch anything between the last inotify event and shutdown.
@@ -406,6 +425,34 @@ let
           '. + { ended: $ended, duration_seconds: $duration, exit_code: $exit, crash_kind: $crash, signal: $signal }' \
           < "$run_dir/metadata.json" > "$run_dir/metadata.json.tmp" \
           && mv "$run_dir/metadata.json.tmp" "$run_dir/metadata.json"
+
+        # Engine-side crash facts. If a UE5 crash bundle was captured
+        # (via crashBundleDirs), surface its self-reported verdict into
+        # metadata.json so `gamelogs list` and `gamelogs report` show
+        # the engine's view alongside our classifier's. Grep-based parse
+        # is enough — runtime-xml fields are flat <Tag>value</Tag> pairs.
+        if [[ -d "$run_dir/crashes" ]]; then
+          ue5_ctx=$(find "$run_dir/crashes" -name 'CrashContext.runtime-xml' 2>/dev/null | head -1)
+          if [[ -n "$ue5_ctx" ]]; then
+            ue5_extract() { grep -oE "<$1>[^<]*" "$ue5_ctx" 2>/dev/null | head -1 | sed "s|<$1>||"; }
+            ue5_type=$(ue5_extract CrashType)
+            ue5_message=$(ue5_extract ErrorMessage)
+            ue5_seconds=$(ue5_extract SecondsSinceStart)
+            ue5_pstack_hash=$(ue5_extract PCallStackHash)
+            ue5_game_state=$(ue5_extract GameStateName)
+            ue5_oom=$(ue5_extract MemoryStats.bIsOOM)
+            jq \
+              --arg t "$ue5_type" \
+              --arg m "$ue5_message" \
+              --argjson s "''${ue5_seconds:-null}" \
+              --arg h "$ue5_pstack_hash" \
+              --arg g "$ue5_game_state" \
+              --argjson o "''${ue5_oom:-0}" \
+              '. + { engine_crash: { type: $t, error_message: $m, seconds_since_start: $s, pcallstack_hash: $h, game_state: $g, is_oom: ($o > 0) } }' \
+              < "$run_dir/metadata.json" > "$run_dir/metadata.json.tmp" \
+              && mv "$run_dir/metadata.json.tmp" "$run_dir/metadata.json"
+          fi
+        fi
 
         if [[ "$crash_kind" != "null" ]]; then
           ln -sfn "$runid" "$state_dir/$game/runs/last-crash"
@@ -714,6 +761,109 @@ let
           || echo "(no active game scopes)"
       }
 
+      # shellcheck disable=SC2016
+      cmd_report() {
+        local game="''${1:-}"
+        [[ -z "$game" ]] && { echo "Usage: gamelogs report GAME [RUNID]" >&2; return 1; }
+        shift
+        local runid="last-crash"
+        [[ -n "''${1:-}" ]] && runid="$1"
+        runid=$(resolve_runid "$game" "$runid") || return 1
+        local rd="$state_dir/$game/runs/$runid"
+        local md="$rd/metadata.json"
+        [[ -f "$md" ]] || { echo "metadata.json missing in $rd" >&2; return 1; }
+
+        local started ended duration exit_code crash_kind engine
+        local ec_type ec_msg ec_seconds ec_state ec_oom
+        started=$(jq -r '.started // "?"' "$md")
+        ended=$(jq -r '.ended // "(in progress)"' "$md")
+        duration=$(jq -r '.duration_seconds // 0' "$md")
+        exit_code=$(jq -r '.exit_code // "?"' "$md")
+        crash_kind=$(jq -r '.crash_kind // "null"' "$md")
+        engine=$(jq -r '.engine // "?"' "$md")
+        ec_type=$(jq -r '.engine_crash.type // empty' "$md")
+        ec_msg=$(jq -r '.engine_crash.error_message // empty' "$md")
+        ec_seconds=$(jq -r '.engine_crash.seconds_since_start // empty' "$md")
+        ec_state=$(jq -r '.engine_crash.game_state // empty' "$md")
+        ec_oom=$(jq -r '.engine_crash.is_oom // false' "$md")
+
+        printf '# gamelogs report - %s/%s\n\n' "$game" "$runid"
+        printf '## Summary\n\n'
+        printf -- '- **Started:** %s\n' "$started"
+        printf -- '- **Ended:** %s\n' "$ended"
+        printf -- '- **Duration:** %ds\n' "$duration"
+        printf -- '- **Exit code:** %s\n' "$exit_code"
+        printf -- '- **Engine:** %s\n' "$engine"
+        printf -- '- **Classifier verdict:** `%s`\n' "$crash_kind"
+        if [[ -n "$ec_type" ]]; then
+          printf -- '- **Engine verdict:** `%s` - %s' "$ec_type" "$ec_msg"
+          [[ -n "$ec_seconds" ]] && printf ' (SecondsSinceStart=%s)' "$ec_seconds"
+          [[ -n "$ec_state" ]] && printf ', GameState=`%s`' "$ec_state"
+          [[ "$ec_oom" == "true" ]] && printf ', OOM'
+          printf '\n'
+        fi
+        printf '\n## Key log markers\n\n'
+
+        printf '### vkd3d.log err: lines\n```\n'
+        grep -E 'err:' "$rd/vkd3d.log" 2>/dev/null | tail -5
+        printf '```\n\n'
+
+        printf '### internal logs (fatal/GPU markers)\n```\n'
+        if compgen -G "$rd/internal/*.log" >/dev/null 2>&1; then
+          grep -nE 'Fatal error|GPU crash detected|DXGI_ERROR_DEVICE_REMOVED|Engine has crashed|Device .* Removed|VK_ERROR' \
+            "$rd"/internal/*.log 2>/dev/null | head -8
+        fi
+        printf '```\n\n'
+
+        printf '### dmesg NVRM/Xid\n```\n'
+        if [[ -f "$rd/system/dmesg.log" ]]; then
+          grep -E 'NVRM|Xid' "$rd/system/dmesg.log" 2>/dev/null | tail -5 || echo "(none)"
+        else
+          echo "(no dmesg.log captured)"
+        fi
+        printf '```\n\n'
+
+        printf '### wineserver / file_crit (tail of stderr.log)\n```\n'
+        if [[ -f "$rd/stderr.log" ]]; then
+          tail -c 1M "$rd/stderr.log" 2>/dev/null \
+            | grep -E 'wineserver:.*Assertion|RtlpWaitForCriticalSection.*timed out' \
+            | head -5
+        fi
+        printf '```\n\n'
+
+        if [[ -f "$rd/system/nvidia-smi-stream.csv" ]]; then
+          printf '## GPU sampler — last 10 samples\n```\n'
+          tail -10 "$rd/system/nvidia-smi-stream.csv"
+          printf '```\n\n'
+        fi
+
+        if [[ -d "$rd/crashes" ]] && compgen -G "$rd/crashes/*" >/dev/null 2>&1; then
+          printf '## Captured crash bundles\n'
+          for bundle in "$rd"/crashes/*; do
+            [[ -d "$bundle" ]] || continue
+            printf -- '- `%s/`\n' "$(basename "$bundle")"
+            for f in "$bundle"/*; do
+              [[ -f "$f" ]] || continue
+              local size
+              size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+              printf '    - %s (%d bytes)\n' "$(basename "$f")" "$size"
+            done
+          done
+          printf '\n'
+        fi
+
+        printf '## Run artifact inventory\n```\n'
+        find "$rd" -type f -printf '%s\t%P\n' 2>/dev/null \
+          | sort -k2 \
+          | awk -F'\t' '{
+              s=$1; u="B";
+              if(s>1024){s=s/1024; u="K"}
+              if(s>1024){s=s/1024; u="M"}
+              printf "  %7.1f%s  %s\n", s, u, $2
+            }'
+        printf '```\n'
+      }
+
       case "''${1:-}" in
         list)     shift; cmd_list "$@" ;;
         show)     shift; cmd_show "$@" ;;
@@ -722,6 +872,7 @@ let
         dump)     shift; cmd_dump "$@" ;;
         tail)     shift; exec gamewatch "$@" ;;
         sessions) shift; cmd_sessions "$@" ;;
+        report)   shift; cmd_report "$@" ;;
         ""|-h|--help)
           cat <<'EOF'
       Usage: gamelogs <subcommand> [args...]
@@ -734,6 +885,7 @@ let
         dump GAME [RUNID] [--out=…]   tar.zst archive of the run dir
         tail GAME                     live multi-file tail (lnav)
         sessions                      list active game scopes
+        report GAME [RUNID]           markdown triage summary (default: last-crash)
 
       Streams: stdout | stderr | wine | vkd3d | journal | dmesg | engine | metadata
       EOF
