@@ -25,7 +25,7 @@ let
     inherit (cfg) retainRuns retainCrashes minFreeMb defaultEnv;
     games = mapAttrs
       (_: g: {
-        inherit (g) wrapperOf engine internalPaths extraEnv crashHooks;
+        inherit (g) wrapperOf engine internalPaths crashBundleDirs extraEnv crashHooks;
         env = gameEnv g;
       })
       cfg.games;
@@ -296,6 +296,23 @@ let
             base=$(basename "$expanded")
             cp -a "$expanded" "$run_dir/internal/$base" 2>/dev/null || true
           fi
+        done
+
+        # Crash bundle capture — per-game directories where the engine
+        # writes per-incident bundles (e.g. UE5's Saved/Crashes/UECC-*
+        # subdirs, each holding CrashContext.runtime-xml + UEMinidump.dmp
+        # + a frozen log snapshot). Mirror any bundle whose mtime fell
+        # inside the run window into $run_dir/crashes/. Older ones belong
+        # to previous sessions and are someone else's problem.
+        mapfile -t crash_bundle_dirs < <(jq -r '.crashBundleDirs[]?' <<< "$game_data")
+        for raw in "''${crash_bundle_dirs[@]}"; do
+          expanded="''${raw//\$WINEPREFIX/''${env_map[WINEPREFIX]:-}}"
+          expanded="''${expanded//\$HOME/$HOME}"
+          [[ -d "$expanded" ]] || continue
+          mkdir -p "$run_dir/crashes"
+          find "$expanded" -mindepth 1 -maxdepth 1 -type d \
+            -newermt "@$start_epoch" \
+            -exec cp -a {} "$run_dir/crashes/" \; 2>/dev/null || true
         done
 
         # Post-run system snapshots.
@@ -817,13 +834,14 @@ in
         DXVK_LOG_LEVEL = "warn";
         # VKD3D warn-only; bump via --debug for triage.
         VKD3D_DEBUG = "warn";
-        # Breadcrumbs add per-command-list markers that survive a hang;
-        # fault_recovery makes vkd3d-proton dump those markers to disk
-        # automatically when it observes VK_ERROR_DEVICE_LOST (instead of
-        # silently propagating it up to D3D12 as DXGI_ERROR_DEVICE_REMOVED
-        # with no diagnostic trail). Together: cheap during normal play,
-        # high-signal for GPU crash triage.
-        VKD3D_CONFIG = "breadcrumbs,fault_recovery";
+        # NB: VKD3D_CONFIG used to carry "breadcrumbs,fault_recovery" for
+        # crash-time diagnostic dumps. Both turn out to be no-ops on the
+        # release vkd3d-proton builds GE-Proton ships — per the upstream
+        # README, breadcrumb support is only compiled in with `trace`
+        # enabled (non-release builds), and fault_recovery isn't a real
+        # flag at all (parser stored the string and ignored it). Removed
+        # to stop pretending we have diagnostics we don't. Reinstate
+        # when/if a trace build is in the loop.
         DXVK_NVAPI_LOG_LEVEL = "warn";
         # NB: PROTON_LOG=1 is intentionally NOT a default. It generates
         # 1+ GB/hour of synchronous Wine trace output during gameplay,
@@ -854,6 +872,17 @@ in
               Paths to log files written by the game/launcher inside the prefix.
               gamerun watches each via inotify and mirrors copies into the run dir.
               Supports `$WINEPREFIX` and `$HOME` expansion.
+            '';
+          };
+          crashBundleDirs = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = ''
+              Directories where the game writes per-incident crash bundles
+              (e.g. UE5's `Saved/Crashes/UECC-*` subdirectories). At finalize
+              time, gamerun copies any subdirectory whose mtime falls within
+              the run window into `<run_dir>/crashes/`. Supports `$WINEPREFIX`
+              and `$HOME` expansion.
             '';
           };
           extraEnv = mkOption {

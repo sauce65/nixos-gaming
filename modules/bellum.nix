@@ -147,6 +147,13 @@ in
       # Bootstrap winetricks log (one-shot, but cheap to mirror).
       "$WINEPREFIX/winetricks.log"
     ];
+    crashBundleDirs = [
+      # UE5 writes a per-incident UECC-Windows-* dir here on every fatal
+      # error, containing CrashContext.runtime-xml + UEMinidump.dmp + a
+      # frozen Project_Bellum.log snapshot. gamerun mirrors any bundle
+      # whose mtime falls inside the run window.
+      "$WINEPREFIX/drive_c/users/steamuser/AppData/Local/Project_Bellum/Saved/Crashes"
+    ];
     extraEnv = {
       # WebView2 SIGSYS workaround. The --service-sandbox-type=service flag
       # Chromium 147+ adds to utility subprocesses (e.g. storage.mojom.StorageService)
@@ -155,10 +162,6 @@ in
       # --no-sandbox disables all sandbox layers globally; we keep the seccomp
       # flag alongside as defense-in-depth.
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--no-sandbox --disable-seccomp-filter-sandbox";
-      # Breadcrumbs + fault_recovery are already in gamelogs.defaultEnv but
-      # explicit here is fine; if a future override removes them globally,
-      # Bellum still keeps them.
-      VKD3D_CONFIG = "breadcrumbs,fault_recovery";
       # Force wine off the futex-based fsync backend onto eventfd-based
       # esync. fsync's fsync_free_shm_idx hit a shm-index double-free from
       # a raced get_cached_object cache lookup ~2h into a session, killing
