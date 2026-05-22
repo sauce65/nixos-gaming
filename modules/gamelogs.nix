@@ -152,7 +152,6 @@ let
       env_map[DXVK_LOG_PATH]="$run_dir/dxvk"
       env_map[VKD3D_LOG_FILE]="$run_dir/vkd3d.log"
       env_map[DXVK_NVAPI_LOG_PATH]="$run_dir"
-      env_map[WINEDEBUGLOG]="$run_dir/wine.log"
       env_map[PROTON_LOG_DIR]="$run_dir"
 
       if (( bench )); then
@@ -818,9 +817,13 @@ in
         DXVK_LOG_LEVEL = "warn";
         # VKD3D warn-only; bump via --debug for triage.
         VKD3D_DEBUG = "warn";
-        # Breadcrumbs add per-command-list markers that survive a hang —
-        # cheap and high-signal for GPU crash triage.
-        VKD3D_CONFIG = "breadcrumbs";
+        # Breadcrumbs add per-command-list markers that survive a hang;
+        # fault_recovery makes vkd3d-proton dump those markers to disk
+        # automatically when it observes VK_ERROR_DEVICE_LOST (instead of
+        # silently propagating it up to D3D12 as DXGI_ERROR_DEVICE_REMOVED
+        # with no diagnostic trail). Together: cheap during normal play,
+        # high-signal for GPU crash triage.
+        VKD3D_CONFIG = "breadcrumbs,fault_recovery";
         DXVK_NVAPI_LOG_LEVEL = "warn";
         # NB: PROTON_LOG=1 is intentionally NOT a default. It generates
         # 1+ GB/hour of synchronous Wine trace output during gameplay,
