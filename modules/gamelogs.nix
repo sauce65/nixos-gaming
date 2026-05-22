@@ -167,9 +167,12 @@ let
       fi
 
       if (( debug )); then
-        # Heavy diagnostics — Wine's full Proton-style debug output, plus
-        # bumped DXVK/VKD3D verbosity. Easily 1+ GB/hour during gameplay.
+        # Heavy diagnostics — Wine's full Proton-style debug output, the
+        # +seh,+unwind exception firehose, plus bumped DXVK/VKD3D verbosity.
+        # Easily 1+ GB/hour during gameplay; +seh,+unwind alone ran ~10 GB/hr
+        # under UE5 in prior runs. Only worth the cost for crash triage.
         env_map[PROTON_LOG]="1"
+        env_map[WINEDEBUG]="+seh,+unwind,+module,+pid,+tid,+timestamp"
         env_map[DXVK_LOG_LEVEL]="debug"
         env_map[VKD3D_DEBUG]="info"
         env_map[DXVK_NVAPI_LOG_LEVEL]="info"
@@ -802,9 +805,14 @@ in
     defaultEnv = mkOption {
       type = types.attrsOf types.str;
       default = {
-        # Targeted Wine channels — quiet during gameplay, fire only on
-        # interesting events (exception unwind, DLL load).
-        WINEDEBUG = "+seh,+unwind,+module,+pid,+tid,+timestamp";
+        # Wine channels safe for normal runs. +module catches DLL load
+        # failures cheaply; +pid/+tid/+timestamp are zero-cost formatting
+        # flags on existing lines. Earlier defaults also had +seh,+unwind,
+        # but those fire on every Windows exception and stack unwind —
+        # UE5 uses SEH on hot paths and produced ~21k lines/sec / 14 GB
+        # of stderr per 2h session. Opt them back in with `gamerun --debug`
+        # when you actually need the detail.
+        WINEDEBUG = "+module,+pid,+tid,+timestamp";
         # DXVK at warn — info dumps swapchain init + every frame's adapter
         # state changes, way too noisy for normal runs.
         DXVK_LOG_LEVEL = "warn";
