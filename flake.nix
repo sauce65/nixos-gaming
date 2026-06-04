@@ -27,6 +27,11 @@
       # OBS Studio with Wayland capture + virtual camera
       streaming = import ./modules/streaming.nix;
 
+      # OBS push-to-talk daemon (evdev → obs-websocket). Works under
+      # Wayland by reading /dev/input below the compositor; OBS's
+      # built-in PTT cannot grab keys while another window has focus.
+      obs-ptt = import ./modules/obs-ptt.nix;
+
       # Game controller support (Xbox, etc.)
       controllers = import ./modules/controllers.nix;
 
@@ -37,6 +42,7 @@
         ./modules/gamelogs.nix
         ./modules/audio-lowlatency.nix
         ./modules/streaming.nix
+        ./modules/obs-ptt.nix
         ./modules/controllers.nix
       ]; };
     };
