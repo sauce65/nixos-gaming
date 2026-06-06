@@ -20,10 +20,10 @@
   };
 
   # Steam's CHTTPClientThread does unaligned atomics (long-standing Valve
-  # bug). Kernel split-lock detection's ratelimit mode throttles offending
-  # threads to ~1/s, wedging Steam updates after ~10s. Wine/Proton games
-  # hit the same trap. Detection stays on at the warn level via dmesg.
-  boot.kernel.sysctl."kernel.split_lock_mitigate" = 0;
+  # bug). Kernel bus-lock detection traps every offending op; even with
+  # split_lock_mitigate=0 the #DB trap cost itself wedges the thread.
+  # Wine/Proton games hit the same trap. Full off-switch is at the cmdline.
+  boot.kernelParams = [ "split_lock_detect=off" ];
 
   environment.systemPackages = with pkgs; [
     mangohud
