@@ -20,12 +20,15 @@
     open = true;
     nvidiaSettings = true;
     powerManagement.enable = true;
-    # Pinned to new_feature (590.48.01) instead of production (595.58.03).
-    # 595 has a confirmed shader-compilation bug on Blackwell (RTX 50-series)
-    # that hangs UE5 games via VKD3D-Proton during PSO compile (e.g., Bellum
-    # gets stuck on loading screens). 590 is the highest known-good driver
-    # for Blackwell at time of writing. See:
-    # https://github.com/joepaji/bellum-linux-installer/releases/tag/v2.0.0
+    # Tracks nvidiaPackages.new_feature -- a MOVING alias that follows nixpkgs,
+    # not a frozen version. Was 590.48.01 when first set (chosen over production
+    # 595.58.03, whose Blackwell/RTX-50 shader-compile bug hangs UE5 games via
+    # VKD3D-Proton during PSO compile, e.g. Bellum stuck on loading screens).
+    # The nixos-unstable 26.11 bump slid the alias to 610.43.02 (2026-06-24),
+    # validated good for Bellum. Caveat: as an alias it can swap the driver
+    # silently on any nixpkgs bump -- check `cat /proc/driver/nvidia/version`
+    # after big rebuilds; to freeze a version, use nvidiaPackages.mkDriver.
+    # 595 bug ref: https://github.com/joepaji/bellum-linux-installer/releases/tag/v2.0.0
     package = config.boot.kernelPackages.nvidiaPackages.new_feature;
   };
 
