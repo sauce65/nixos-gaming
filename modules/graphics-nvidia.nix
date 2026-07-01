@@ -1,7 +1,7 @@
 # NVIDIA proprietary driver stack for Turing+ (RTX 20/30/40/50).
 # Open kernel modules required on RTX 50-series. Wayland session
 # variables and VA-API bridge for hardware video decode.
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 {
   services.xserver.videoDrivers = [ "nvidia" ];
 
@@ -29,7 +29,7 @@
     # silently on any nixpkgs bump -- check `cat /proc/driver/nvidia/version`
     # after big rebuilds; to freeze a version, use nvidiaPackages.mkDriver.
     # 595 bug ref: https://github.com/joepaji/bellum-linux-installer/releases/tag/v2.0.0
-    package = config.boot.kernelPackages.nvidiaPackages.new_feature;
+    package = lib.mkDefault config.boot.kernelPackages.nvidiaPackages.new_feature;
   };
 
   boot.kernelParams = [

@@ -122,6 +122,11 @@ let
   };
 in
 {
+  # Self-contained: bellum logs through the gamelogs harness (it declares
+  # gamelogs.games.bellum below and the wrapper execs `gamerun`), so it brings
+  # gamelogs with it rather than depending on the consumer's import order.
+  imports = [ ./gamelogs.nix ];
+
   environment.systemPackages = [
     bellum-bootstrap
     bellum
