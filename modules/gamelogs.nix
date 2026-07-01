@@ -25,7 +25,7 @@ let
     inherit (cfg) retainRuns retainCrashes minFreeMb defaultEnv;
     games = mapAttrs
       (_: g: {
-        inherit (g) wrapperOf engine internalPaths crashBundleDirs extraEnv crashHooks;
+        inherit (g) wrapperOf engine internalPaths crashBundleDirs extraEnv crashHooks antiCheat;
         env = gameEnv g;
       })
       cfg.games;
@@ -119,6 +119,21 @@ let
       retain_runs=$(jq -r '.retainRuns'    < "$REGISTRY")
       retain_crashes=$(jq -r '.retainCrashes' < "$REGISTRY")
       min_free_mb=$(jq -r '.minFreeMb'    < "$REGISTRY")
+
+      # Anti-cheat guard. Never inject an in-process capture/overlay Vulkan
+      # layer into a game protected by anti-cheat: obs-vkcapture (--record ->
+      # OBS_VKCAPTURE) and MangoHud (--bench -> MANGOHUD) load a foreign .so
+      # *inside* the game process, which EAC/EOS/BattlEye can flag as tampering
+      # (mid-match kick, or a ban). Refuse those for anti-cheat games; the
+      # non-injecting diagnostics (--debug, --dump-shaders) still apply. Record
+      # these via compositor capture (OBS PipeWire screencast), not this hook.
+      anticheat=$(jq -r '.antiCheat // false' <<< "$game_data")
+      if [[ "$anticheat" == "true" ]] && (( record || bench )); then
+        echo "[gamerun] '$game' is anti-cheat-protected: refusing to inject capture/overlay Vulkan layers (OBS_VKCAPTURE / MANGOHUD)." >&2
+        echo "[gamerun] Record anti-cheat games via compositor capture (OBS PipeWire screencast), not the in-process hook." >&2
+        record=0
+        bench=0
+      fi
 
       state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/games"
       mkdir -p "$state_dir/$game/runs"
@@ -1046,6 +1061,19 @@ in
             type = types.listOf types.str;
             default = [ ];
             description = "Reserved; commands to run on non-zero exit (not implemented yet).";
+          };
+          antiCheat = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Marks this game as protected by anti-cheat (EAC/EOS, BattlEye, etc.).
+              When true, gamerun REFUSES the in-process capture/overlay layer
+              flags — `--record` (OBS_VKCAPTURE / obs-vkcapture) and `--bench`
+              (MANGOHUD / MangoHud) — because injecting a foreign Vulkan layer
+              into an anti-cheat-protected process is a kick/ban risk. The
+              non-injecting diagnostics (`--debug`, `--dump-shaders`) still apply.
+              Record such games via compositor capture (OBS PipeWire screencast).
+            '';
           };
         };
       });

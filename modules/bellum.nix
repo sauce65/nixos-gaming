@@ -143,6 +143,10 @@ in
   gamelogs.games.bellum = {
     wrapperOf = "umu-run";
     engine = "ue5";
+    # EAC/EOS-protected competitive shooter: block gamerun from injecting
+    # obs-vkcapture/MangoHud Vulkan layers (--record/--bench) that the anti-cheat
+    # can flag as tampering. Record via OBS PipeWire compositor capture instead.
+    antiCheat = true;
     internalPaths = [
       # UE5 game log + auto-rotated backups.
       "$WINEPREFIX/drive_c/users/steamuser/AppData/Local/Project_Bellum/Saved/Logs/Project_Bellum.log"
