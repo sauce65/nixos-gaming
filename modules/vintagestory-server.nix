@@ -7,16 +7,61 @@
 # in your own config. `systemd.services.vintagestory-server` merges across
 # modules, so adding `after`/`requires` for a data-dir mount from the consuming
 # machine composes cleanly with the unit defined here.
+#
+# Mods are declarative: list pinned zips in `mods` and a baked-in ExecStartPre
+# reconciles <dataPath>/Mods on every (re)start.
 { config, lib, pkgs, ... }:
 
 let
   cfg = config.services.vintagestory-server;
+
+  # Baked-in sync: (re)link the declared, pinned mods into <dataPath>/Mods with
+  # clean filenames, and remove any previously-managed mods (our store symlinks)
+  # that are no longer declared. Manually dropped real files are left untouched,
+  # so declarative and hand-placed mods coexist. Wired as ExecStartPre, so the
+  # set is reconciled on every (re)start — including the restart a deploy triggers.
+  syncMods = pkgs.writeShellApplication {
+    name = "vintagestory-sync-mods";
+    text = ''
+      mods_dir="${cfg.dataPath}/Mods"
+      mkdir -p "$mods_dir"
+      # Drop previously-managed mods (symlinks into the store); keep real files.
+      find "$mods_dir" -maxdepth 1 -type l -lname '/nix/store/*' -delete
+      # (Re)link the declared, pinned mods under clean, hash-free filenames.
+      managed=( ${lib.escapeShellArgs cfg.mods} )
+      for m in "''${managed[@]}"; do
+        name="$(basename "$m")"
+        ln -sfn "$m" "$mods_dir/''${name#*-}"
+      done
+    '';
+  };
 in
 {
   options.services.vintagestory-server = {
     enable = lib.mkEnableOption "Vintage Story dedicated server";
 
     package = lib.mkPackageOption pkgs "vintagestory" { };
+
+    mods = lib.mkOption {
+      type = lib.types.listOf lib.types.package;
+      default = [ ];
+      example = lib.literalExpression ''
+        [ (pkgs.fetchVintagestoryMod {
+            name = "ProspectTogether-2.2.1.zip";
+            url = "https://moddbcdn.vintagestory.at/ProspectTogether-2.2_....zip";
+            hash = "sha256-...";
+          })
+        ]
+      '';
+      description = ''
+        Mods to install into {file}`<dataPath>/Mods`, each a pinned `.zip`
+        release (or an unpacked-mod directory) as a store path — typically from
+        {option}`pkgs.fetchVintagestoryMod`. A baked-in ExecStartPre links them
+        in on every service (re)start: mods added or removed here are reconciled,
+        while files placed in {file}`Mods/` by hand are left untouched. Pin each
+        mod to a release built for {option}`package`'s game version.
+      '';
+    };
 
     dataPath = lib.mkOption {
       type = lib.types.path;
@@ -77,6 +122,7 @@ in
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
+        ExecStartPre = lib.getExe syncMods;
         ExecStart = "${lib.getExe' cfg.package "vintagestory-server"} --dataPath ${cfg.dataPath}";
         Restart = "on-failure";
         User = cfg.user;

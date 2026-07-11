@@ -62,8 +62,8 @@
         ]; };
       };
 
-      # Overlay exposing the pinned Vintage Story build (client + dedicated
-      # server in one derivation) as pkgs.vintagestory-latest.
+      # Overlay: pkgs.vintagestory-latest (the pinned client + dedicated-server
+      # build) and pkgs.fetchVintagestoryMod (pin a mod release by hash).
       overlays.default = import ./overlays/default.nix;
 
       # Standalone build of the pinned game (`nix build .#vintagestory-latest`).
