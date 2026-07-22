@@ -6,10 +6,10 @@
 { vintagestory, fetchurl, lib, stdenv, patchelf }:
 
 vintagestory.overrideAttrs (old: rec {
-  version = "1.22.4";
+  version = "1.22.5";
   src = fetchurl {
     url = "https://cdn.vintagestory.at/gamefiles/stable/vs_client_linux-x64_${version}.tar.gz";
-    hash = "sha256-6efnjDUXMweOzN1mnkwVyQzQjs1QlFHBss1qb62Z2o0=";
+    hash = "sha256-ozpjsnqJKFdzKeJuOSuurYN8UEvLrBw17quGZeMN8PY=";
   };
 
   # nixpkgs runs the game through a dotnet wrapper (+ LD_LIBRARY_PATH) and never
