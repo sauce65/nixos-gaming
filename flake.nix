@@ -22,6 +22,10 @@
         # Bellum (Astarte Industries) via umu-run + GE-Proton
         bellum = import ./modules/bellum.nix;
 
+        # BFME: All-In-One Launcher (LotR: Battle for Middle-earth) via
+        # umu-run + GE-Proton (DXVK for the old D3D8/9 games)
+        bfme = import ./modules/bfme.nix;
+
         # Per-game log capture harness (gamerun/gamelogs/gamewatch CLIs).
         # Other modules (e.g. bellum) declare their game profiles via the
         # `gamelogs.games.<name>` option this exposes.
@@ -54,8 +58,8 @@
 
         # Sensible gaming core: Steam/Proton + controllers, GPU-agnostic (bring
         # your own graphics module). The heavier/opinionated bits — streaming,
-        # obs-ptt, bellum, audio-lowlatency, yeti-fix — are opt-in: import them
-        # explicitly on the machines that actually want them.
+        # obs-ptt, bellum, bfme, audio-lowlatency, yeti-fix — are opt-in: import
+        # them explicitly on the machines that actually want them.
         default = { imports = [
           ./modules/gaming.nix
           ./modules/controllers.nix
