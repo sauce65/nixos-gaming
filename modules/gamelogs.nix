@@ -62,6 +62,12 @@ let
 
       Flags:
         --bench          enable MangoHud frametime CSV (output_folder=<run>/mangohud)
+        --shader-trace   diagnose shader-compilation stutter: MangoHud frametime CSV
+                         (implies --bench) + VKD3D_DEBUG=info so vkd3d-proton logs
+                         each PSO compile. Deliberately omits the WINEDEBUG firehose
+                         that --debug adds, since that would itself cause stutter and
+                         mask the hitch. Correlate a frametime spike in
+                         <run>/mangohud with a pipeline-compile line in vkd3d.log.
         --dump-shaders   set VKD3D_SHADER_DUMP_PATH=<run>/shaders (large output)
         --debug          enable heavy diagnostics (PROTON_LOG=1, DXVK_LOG_LEVEL=debug,
                          VKD3D_DEBUG=info). Adds GBs of log output per hour — only
@@ -77,12 +83,14 @@ let
       dump_shaders=0
       debug=0
       record=0
+      shader_trace=0
       game=""
       cmd=()
 
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --bench)         bench=1; shift ;;
+          --shader-trace)  shader_trace=1; bench=1; shift ;;
           --dump-shaders)  dump_shaders=1; shift ;;
           --debug)         debug=1; shift ;;
           --record)        record=1; shift ;;
@@ -190,6 +198,16 @@ let
         env_map[DXVK_LOG_LEVEL]="debug"
         env_map[VKD3D_DEBUG]="info"
         env_map[DXVK_NVAPI_LOG_LEVEL]="info"
+      fi
+
+      if (( shader_trace )) && ! (( debug )); then
+        # Targeted shader-stutter triage. VKD3D_DEBUG=info makes vkd3d-proton
+        # log every pipeline (PSO) compile, so a frametime spike in the MangoHud
+        # CSV can be attributed to a cold PSO compile. Crucially we do NOT touch
+        # WINEDEBUG here — the +module/+seh firehose --debug enables is itself a
+        # stutter source and would contaminate the measurement. (No-op if --debug
+        # already set the heavier values.)
+        env_map[VKD3D_DEBUG]="info"
       fi
 
       if (( record )); then
