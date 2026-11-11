@@ -180,6 +180,13 @@ in
       # race. Cost is one eventfd per kernel object — negligible at our
       # ulimit, sub-1% frame-time impact in practice.
       PROTON_NO_FSYNC = "1";
+      # Wine logging off. Since EAC's 2026-11 linux64 module, the gamelogs
+      # default WINEDEBUG=+module crashes the game before its first frame:
+      # the module calls LdrRegisterDllNotification from inside a unix-side
+      # syscall, and that TRACE re-enters __wine_unix_call_dispatcher on the
+      # same kernel stack (SEGV in __wine_syscall_dispatcher). `--debug`
+      # forces +module back on and crashes the same way.
+      WINEDEBUG = "-all";
     };
   };
 }
